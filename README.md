@@ -22,6 +22,7 @@ This script makes it very easy for anyone to deploy a "basic" VMware Cloud Found
 
 ## Changelog
 * **05/24/2026**
+  * Related [Blog Post](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-vcf-9.1-fleet-deployment-vlan-fork-branch/) 
   * Created vlan branch of this fork to avoid PR merge conflict
   * Updated to support VLAN for VCF 9.1
   * For VVF/VCF 9.0.x VLAN deployments, please use [VCF 9.0](9.0) directory
@@ -30,7 +31,7 @@ This script makes it very easy for anyone to deploy a "basic" VMware Cloud Found
   * Using Minimal VM resources **$noVCFAutomation** = 1, **$NestedESXiMGMTvCPU** = "20", **$NestedESXiMGMTvMEM** = "56" #GB, (80vCPU 224GBvMEM) x 80 / 100 = 64vCPU 179vMEM as shown in the UI the recommended much needed extra 20%
   * Offline Depot Configurations (optional) keeping 9.0 config logic with https workaround **$VCFInstallerDepotHttps** = $false
   * VVF 9.1 VLAN and VCF 9.1 WLD VLAN not yet present in this commit, notably **$VCSASize** cannot be Tiny much less further reducing Memory workaound haven't tested, similarly **$VCFOperationsSize** cannot be xsmall
-  * Related Blog Post coming with Kubernetes troubleshooting and workaround (typical Platform Engineering tasks from my experiences), in case it get stuck for more than an hour, to complete the deployment successfully...
+  * Related Blog Post with Kubernetes troubleshooting and workaround (typical Platform Engineering tasks from my experiences), in case it get stuck for more than an hour, to complete the deployment successfully...
 
 * **05/12/2026**
   * Updated to support VVF/VCF 9.1
