@@ -629,7 +629,6 @@ if($updateVCFInstallerConfig -eq 1) {
         }
     }
 
-    $script += "sed -i '81,94d' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/operations/import/import.json`n"
     $script += "echo 'y' | '/opt/vmware/vcf/operationsmanager/scripts/cli/sddcmanager_restart_services.sh'"
     $script | Out-File $scriptName
 
