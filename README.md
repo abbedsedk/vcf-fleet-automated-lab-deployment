@@ -25,7 +25,7 @@ This script makes it very easy for anyone to deploy a "basic" VMware Cloud Found
   * Related [Blog Post](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-vcf-9.1-fleet-deployment-vlan-fork-branch/) 
   * Created vlan branch of this fork to avoid PR merge conflict
   * Updated to support VLAN for VCF 9.1
-  * For VVF/VCF 9.0.x VLAN deployments, please use [VCF 9.0](9.0) directory
+  * For VVF/VCF 9.0.x VLAN deployments, please use [VCF 9.0](https://github.com/abbedsedk/vcf-fleet-automated-lab-deployment/tree/vlan/9.0) directory
   * VLANs with reference taken from new [vcf-9.1-planning-and-preparation-workbook.xlsx](https://techdocs.broadcom.com/content/dam/broadcom/techdocs/us/en/assets/vmware-cis/vcf/vcf-9.1-planning-and-preparation-workbook.xlsx)
   * Using 4 nested ESX, using even number nested host here to spread the load on even physical host (I am still using 2 physical host 24threads 128GB of RAM each)
   * Using Minimal VM resources **$noVCFAutomation** = 1, **$NestedESXiMGMTvCPU** = "20", **$NestedESXiMGMTvMEM** = "56" #GB, (80vCPU 224GBvMEM) x 80 / 100 = 64vCPU 179vMEM as shown in the UI the recommended much needed extra 20%
@@ -35,7 +35,7 @@ This script makes it very easy for anyone to deploy a "basic" VMware Cloud Found
 
 * **05/12/2026**
   * Updated to support VVF/VCF 9.1
-  * For VVF/VCF 9.0.x deployments, please use [VCF 9.0](9.0) directory
+  * For VVF/VCF 9.0.x deployments, please use [VCF 9.0](https://github.com/lamw/vcf-fleet-automated-lab-deployment/tree/master/9.0) directory
 
 * **01/04/2026**
   * Related [Blog Post](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-vcf-9.x-fleet-deployment-vlan-fork---with-vcf-automation/)
