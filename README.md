@@ -21,6 +21,20 @@
 This script makes it very easy for anyone to deploy a "basic" VMware Cloud Foundation (VCF) 9.x Fleet OR VMware vSphere Foundation (VVF) in a Nested Lab environment for learning and educational purposes.
 
 ## Changelog
+* **08/13/2026**
+  * Related [Blog Post](https://strivevirtually.net/post/vcf-9.0-3.-isolated-workload-domain-automated-deployment-in-1h30/)
+  * Added in sample-abbed-vcf-9.0.2-vlan.ps1 variable **$VCFWorkloadDomainVCSASSODomainName** replaced hardcoded "vsphere.local" to allow [Isolated Workload Domain](https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/building-your-private-cloud-infrastructure/working-with-workload-domains/deploy-a-vi-workload-domain-using-the-sddc-manager-ui.html#:~:text=isolated)
+  * Added in vcf-automated-wld-vlan-deployment-9.0.ps1 VM_MANAGEMENT DVPG for NSX Edge VMs and all VMs inside Workload Domain
+    ```     
+									@{  
+                                        "name" = "${VCFWorkloadDomainVCSAClusterName}-vds01-vm-management"  
+                                        "transportType" = "VM_MANAGEMENT"  
+									}  
+    ```  
+    * Note This portgroup after Workload Domain creation should be created manually (from the workbook notes), but since we include it in the json, we only to have change manually its VLAN on VDS DVPG (to 1310 in this case which is set as **$NestedVMNetworkWldVLanId** at deployment).  
+  * Added **$setupEntropy** for optimization in Nested ESX VMs https://williamlam.com/2026/04/quick-tip-high-cpu-utilization-on-esx-due-to-slow-entropy-from-amd-zen-4-cpus.html
+  * reusing Lab vApp Deployment ID (**$random_string** value) for Day-2 Workload Domain deployment
+
 * **05/24/2026**
   * Related [Blog Post](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-vcf-9.1-fleet-deployment-vlan-fork-branch/) 
   * Created vlan branch of this fork to avoid PR merge conflict
