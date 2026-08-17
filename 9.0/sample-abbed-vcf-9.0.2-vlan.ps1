@@ -56,7 +56,7 @@ $VCFInstallerDepotToken = ""
 # Offline Depot Configurations (optional)
 $VCFInstallerDepotUsername = "vcf"
 $VCFInstallerDepotPassword = "vcf123!"
-$VCFInstallerDepotHost = "192.168.1.68"
+$VCFInstallerDepotHost = "192.168.1.250"
 $VCFInstallerDepotPort = 8888
 $VCFInstallerDepotHttps = $false
 
@@ -213,7 +213,7 @@ $VCFWorkloadDomainPoolFile = "networkPoolSpec.json"
 # WLD vCenter Configuration
 $VCFWorkloadDomainVCSAHostname = "vc03"
 $VCFWorkloadDomainVCSAIP = "10.11.10.73"
-$VCFWorkloadDomainVCSASSODomainName = "w02.local"
+$VCFWorkloadDomainVCSASSODomainName = "w02.local" # Isolated Workload Domain
 $VCFWorkloadDomainVCSARootPassword = "VMware1!VMware1!"
 $VCFWorkloadDomainVCSASSOPassword = "VMware1!VMware1!"
 $VCFWorkloadDomainVCSADatacenterName = "vcf-wld-dc"
