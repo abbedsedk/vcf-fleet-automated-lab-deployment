@@ -12,6 +12,7 @@ $VMDatastoreWLD = "NFS01-Rocky"
 $VMNetmask = "255.255.255.0"
 $VMGateway = "10.11.10.53"
 $VMNestedESXiMgmtGateway = "10.11.11.53" # Download VCF9 workbook at this link https://techdocs.broadcom.com/content/dam/broadcom/techdocs/us/en/assets/vmware-cis/vcf/vcf-9.0-planning-and-preparation-workbook.xlsx
+$VMWldGateway = "10.13.10.53" # for documentation, used by NSX Edge VMs
 $VMNestedESXiWldGateway = "10.13.11.53"
 $VMDNS = "192.168.1.100"
 $VMNTP = "dc-pc2.abidi.systems"
@@ -30,6 +31,7 @@ $vsanVlanId = 1113
 $esxiNSXTepVlanId = 1114
 
 # Vlan Configuration for Nested Workload Domain
+$NestedVMNetworkWldVLanId = 1310
 $vmk0WldVLanId = 1311
 $vmotionWldVlanId = 1312
 $vsanWldVlanId = 1313
@@ -104,9 +106,9 @@ $NestedESXiHostnameToIPsForManagementDomain = @{
 
 # Nested ESXi VMs for Workload Domain
 $NestedESXiHostnameToIPsForWorkloadDomain = @{
-    #"esx04" = "10.13.11.4"
-    #"esx05" = "10.13.11.5"
-    #"esx06" = "10.13.11.6"
+    "esx06" = "10.13.11.6"
+    "esx07" = "10.13.11.7"
+    #"esx08" = "10.13.11.8"
 }
 
 # Nested ESXi VM Resources for Management Domain
@@ -119,8 +121,8 @@ $NestedESXiMGMTvGuestOS = "vmkernel9Guest" # default vmkernel8Guest
 $NestedESXiMGMTvHardwareVersion = "vmx-22" # default vmx-20, vmx-21 nvme 1.3c, vmx-22 nvme 1.4
 
 # Nested ESXi VM Resources for Workload Domain
-$NestedESXiWLDvCPU = "16"
-$NestedESXiWLDvMEM = "64" #GB
+$NestedESXiWLDvCPU = "8"
+$NestedESXiWLDvMEM = "56" #GB
 $NestedESXiWLDCachingvDisk = "32" #GB
 $NestedESXiWLDCapacityvDisk = "250" #GB
 $NestedESXiWLDBootDisk = "64" #GB
@@ -133,6 +135,9 @@ $NestedESXiManagementNetworkCidr = "10.11.11.0/24"
 $NestedESXivMotionNetworkCidr = "10.11.12.0/24"
 $NestedESXivSANNetworkCidr = "10.11.13.0/24"
 $NestedESXiNSXTepNetworkCidr = "10.11.14.0/24"
+
+# Wld Domain VM Network Configuration
+$NestedESXiVmManagementWldDomainNetworkCidr = "10.13.10.0/24"
 
 # ESXi Networks Configuration for Wld Domain
 $NestedESXiManagementWldDomainNetworkCidr = "10.13.11.0/24"
@@ -194,29 +199,30 @@ $VCFAutomationNodePrefix = "vcf-abs-auto"
 $VCFAutomationClusterCIDR = "198.18.0.0/15"
 
 # Set to 1 only if you do not want VCF Automation to be deployed in the bringup
-$noVCFAutomation = 0
+$noVCFAutomation = 1
 
 # VCF Workload Domain Configurations
-$VCFWorkloadDomainName = "vcf-w01"
-$VCFWorkloadDomainOrgName = "vcf-w01"
+$VCFWorkloadDomainName = "vcf-w02"
+$VCFWorkloadDomainOrgName = "vcf-w02"
 $VCFWorkloadDomainEnableVCLM = $true
 $VCFWorkloadDomainEnableVSANESA = $false
-$VCFWorkloadDomainPoolName = "vcf-w01-rp01"
+$VCFWorkloadDomainPoolName = "vcf-w02-rp01"
 $VCFWorkloadDomainPoolFile = "networkPoolSpec.json"
 
 
 # WLD vCenter Configuration
-$VCFWorkloadDomainVCSAHostname = "vc02"
-$VCFWorkloadDomainVCSAIP = "10.11.10.40"
+$VCFWorkloadDomainVCSAHostname = "vc03"
+$VCFWorkloadDomainVCSAIP = "10.11.10.73"
+$VCFWorkloadDomainVCSASSODomainName = "w02.local"
 $VCFWorkloadDomainVCSARootPassword = "VMware1!VMware1!"
 $VCFWorkloadDomainVCSASSOPassword = "VMware1!VMware1!"
 $VCFWorkloadDomainVCSADatacenterName = "vcf-wld-dc"
-$VCFWorkloadDomainVCSAClusterName = "vcf-wld-cl01"
+$VCFWorkloadDomainVCSAClusterName = "vcf-w02-cl01"
 
 # WLD NSX Configuration
-$VCFWorkloadDomainNSXManagerVIPHostname = "nsx02" # remember to create DNS A record with associated IP, 10.11.10.41 in this case
-$VCFWorkloadDomainNSXManagerNode1Hostname = "nsx02a" 
-$VCFWorkloadDomainNSXManagerNode1IP = "10.11.10.42"
+$VCFWorkloadDomainNSXManagerVIPHostname = "nsx03"
+$VCFWorkloadDomainNSXManagerNode1Hostname = "nsx03a" 
+$VCFWorkloadDomainNSXManagerNode1IP = "10.11.10.75"
 $VCFWorkloadDomainNSXAdminPassword = "VMware1!VMware1!"
 $VCFWorkloadDomainSeparateNSXSwitch = $true
 $VCFWorkloadDomainNSXManagerSize = "small"
