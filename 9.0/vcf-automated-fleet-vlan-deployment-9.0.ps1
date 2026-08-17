@@ -19,7 +19,9 @@ if ($EnvConfigFile -and (Test-Path $EnvConfigFile)) {
 #### DO NOT EDIT BEYOND HERE ####
 
 # VCF Instance Deployment JSON
-$random_string = -join ((48..57) + (97..122) | Get-Random -Count 8 | ForEach-Object {[char]$_})
+#$random_string = -join ((48..57) + (97..122) | Get-Random -Count 8 | ForEach-Object {[char]$_})
+
+$random_string = "0d1cfroq"
 
 $VAppName = "Nested-${VCFInstallerProductSKU}-9-Lab-${VAppLabel}-${random_string}"
 $VCFManagementDomainJSONFile = "$(${VCFInstallerProductSKU}.toLower())-mgmt-${random_string}.json"
@@ -27,15 +29,16 @@ $verboseLogFile = "vcf-9-lab-deployment-${random_string}.log"
 
 $preCheck = 1
 $confirmDeployment = 1
-$deployNestedESXiVMsForMgmt = 1
-$deployNestedESXiVMsForWLD = 0
+$deployNestedESXiVMsForMgmt = 0
+$deployNestedESXiVMsForWLD = 1
 $setVLanId = 1
-$deployVCFInstaller = 1
-$updateVCFInstallerConfig = 1
-$configureVCFInstallerConfig = 1
+$setupEntropy = 1
+$deployVCFInstaller = 0
+$updateVCFInstallerConfig = 0
+$configureVCFInstallerConfig = 0
 $moveVMsIntovApp = 1
-$generateMgmtJson = 1
-$startVCFBringup = 1
+$generateMgmtJson = 0
+$startVCFBringup = 0
 $uploadVCFNotifyScript = 0
 
 $srcNotificationScript = "vcf-bringup-notification.sh"
@@ -461,7 +464,7 @@ if($confirmDeployment -eq 1) {
         Write-Host -NoNewline -ForegroundColor Green "# of Nested ESXi VMs: "
         Write-Host -ForegroundColor White $NestedESXiHostnameToIPsForWorkloadDomain.count
         Write-Host -NoNewline -ForegroundColor Green "IP Address(s): "
-        Write-Host -ForegroundColor White $NestedESXiHostnameToIPsForWorkloadDomain.Values
+        Write-Host -ForegroundColor White ($NestedESXiHostnameToIPsForWorkloadDomain.Values|Sort-Object)
         Write-Host -NoNewline -ForegroundColor Green "vCPU: "
         Write-Host -ForegroundColor White $NestedESXiWLDvCPU
         Write-Host -NoNewline -ForegroundColor Green "vMEM: "
@@ -509,6 +512,8 @@ if($confirmDeployment -eq 1) {
     Write-Host -NoNewline -ForegroundColor Green "ESXi Gateway Mgmt Domain: "
     Write-Host -ForegroundColor White $VMNestedESXiMgmtGateway
 	if($deployNestedESXiVMsForWLD -eq 1) {
+		Write-Host -NoNewline -ForegroundColor Green "Wld VM Gateway (documentation for NSX Edge VMs): "
+		Write-Host -ForegroundColor White $VMWldGateway
 		Write-Host -NoNewline -ForegroundColor Green "ESXi Gateway Wld Domain: "
 		Write-Host -ForegroundColor White $VMNestedESXiWldGateway
 	}
@@ -624,7 +629,7 @@ if($updateVCFInstallerConfig -eq 1) {
             $script += "sed -i -e `"/lcm.depot.adapter.port=.*/a lcm.depot.adapter.httpsEnabled=false`" ${vcfLcmConfigFile}`n"
         }
     }
-    $script += "echo 'y' | '/opt/vmware/vcf/operationsmanager/scripts/cli/sddcmanager_restart_services.sh'`n"
+    $script += "echo 'y' | /opt/vmware/vcf/operationsmanager/scripts/cli/sddcmanager_restart_services.sh`n"
     $script | Out-File $scriptName
 
     My-Logger "Transfering configuration shell script ($scriptName) to VCF Installer VM ..."
@@ -632,7 +637,7 @@ if($updateVCFInstallerConfig -eq 1) {
     My-Logger "Running configuration shell script on VCF Installer VM ..."
     Invoke-VMScript -ScriptText "bash /tmp/${scriptName}" -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword | Out-Null
 
-    Start-Sleep -Seconds 120
+    Start-Sleep -Seconds 180
 }
 
 if($deployNestedESXiVMsForMgmt -eq 1) {
@@ -802,12 +807,72 @@ if($setVLanId -eq 1) {
             } until ($ping -contains "True")
             
             $viConnectionESXi = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile 
-            My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for VM Network"
-            Get-VirtualPortgroup -Server $viConnectionESXi -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
+            My-Logger "Setting VLAN ID NestedVMNetworkWldVLanId for VM Network"
+            Get-VirtualPortgroup -Server $viConnectionESXi -Name "VM Network" | Set-VirtualPortgroup -VLanId NestedVMNetworkWldVLanId | Out-File -Append -LiteralPath $verboseLogFile
 		}
 	}
 }
 
+if( $setupEntropy -eq 1) {
+    if($deployNestedESXiVMsForMgmt -eq 1) {
+		My-Logger "Setting Entropy on Management Domain hosts..."
+		$NestedESXiHostnameToIPsForManagementDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+			$VMName = $_.Key
+			$VMIPAddress = $_.Value
+			$targetVMHost = $VMIPAddress
+			
+			do {	
+			My-Logger "Waiting for $targetVMHost to be ready on network ..."
+			$ping = Test-Connection $targetVMHost -Quiet
+			Start-Sleep 60
+			} until ($ping -contains "True")
+			
+			My-Logger "Connecting to ESXi $targetVMHost node ..."
+			$vEsxi = Connect-VIServer -Server $targetVMHost -User root -Password $VMPassword -WarningAction SilentlyContinue
+			$esxcli = Get-EsxCli -Server $vEsxi -V2
+			My-Logger "Update entropy sources to using RDRAND"
+			$kernargs=$esxcli.system.settings.kernel.set.CreateArgs()
+			$kernargs.setting = "entropySources"
+			$kernargs.value = 2
+			$esxcli.system.settings.kernel.set.Invoke($kernargs) | Out-File -Append -LiteralPath $verboseLogFile
+			sleep 30
+			My-Logger "Rebooting ESXi $targetVMHost ..."
+			Restart-VMHost -VMHost $targetVMHost -Server $vEsxi -confirm:$false -force -RunAsync -ErrorAction Ignore | Out-File -Append -LiteralPath $verboseLogFile
+			
+			My-Logger "Disconnecting from $targetVMHost ..."
+			Disconnect-VIServer -Server $vEsxi -Confirm:$false
+		}
+	}
+	if($deployNestedESXiVMsForWLD -eq 1) {
+		My-Logger "Setting Entropy on Workload Domain hosts..."
+		$NestedESXiHostnameToIPsForWorkloadDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+			$VMName = $_.Key
+			$VMIPAddress = $_.Value
+			$targetVMHost = $VMIPAddress
+			
+			do {	
+			My-Logger "Waiting for $targetVMHost to be ready on network ..."
+			$ping = Test-Connection $targetVMHost -Quiet
+			Start-Sleep 60
+			} until ($ping -contains "True")
+			
+			My-Logger "Connecting to ESXi $targetVMHost node ..."
+			$vEsxi = Connect-VIServer -Server $targetVMHost -User root -Password $VMPassword -WarningAction SilentlyContinue
+			$esxcli = Get-EsxCli -Server $vEsxi -V2
+			My-Logger "Update entropy sources to using RDRAND"
+			$kernargs=$esxcli.system.settings.kernel.set.CreateArgs()
+			$kernargs.setting = "entropySources"
+			$kernargs.value = 2
+			$esxcli.system.settings.kernel.set.Invoke($kernargs) | Out-File -Append -LiteralPath $verboseLogFile
+			sleep 30
+			My-Logger "Rebooting ESXi $targetVMHost ..."
+			Restart-VMHost -VMHost $targetVMHost -Server $vEsxi -confirm:$false -force -RunAsync -ErrorAction Ignore | Out-File -Append -LiteralPath $verboseLogFile
+			
+			My-Logger "Disconnecting from $targetVMHost ..."
+			Disconnect-VIServer -Server $vEsxi -Confirm:$false
+		}
+	}
+}
 if( $deployNestedESXiVMs -eq 1) {
     My-Logger "Disconnecting from $VIServer ..."
     Disconnect-VIServer -Server $viConnection -Confirm:$false
