@@ -21,7 +21,7 @@ if ($EnvConfigFile -and (Test-Path $EnvConfigFile)) {
 # VCF Instance Deployment JSON
 $random_string = -join ((48..57) + (97..122) | Get-Random -Count 8 | ForEach-Object {[char]$_})
 
-#$random_string = "vxnid37l" # uncomment to reuse the script on the same vApp with its generated Deployment Id and comment the original $random_string
+#$random_string = "bkjwo4hi" # uncomment to reuse the script on the same vApp with its generated Deployment Id and comment the original $random_string
 
 $VAppName = "Nested-${VCFInstallerProductSKU}-9-Lab-${VAppLabel}-${random_string}"
 $VCFManagementDomainJSONFile = "$(${VCFInstallerProductSKU}.toLower())-mgmt-${random_string}.json"
@@ -65,7 +65,6 @@ $startVCFBringup = 1
 $updateSddcManagerConfig = 1
 
 $uploadVCFNotifyScript = 0
-
 
 $srcNotificationScript = "vcf-bringup-notification.sh"
 $dstNotificationScript = "/root/vcf-bringup-notification.sh"
@@ -483,7 +482,7 @@ Function Download-VCFRelease {
             My-Logger "DEBUG: Body: $body"
         }
 
-        $requests = Invoke-WebRequest -Uri $uri -Method GET -SkipCertificateCheck -TimeoutSec 5 -Headers $headers
+        $requests = Invoke-WebRequest -Uri $uri -Method GET -SkipCertificateCheck -TimeoutSec 30 -Headers $headers
     } catch {
         My-Logger "Failed to retrieve $VCFInstallerProductSKU release" "red"
         Write-Error "`n($_.Exception.Message)`n"
@@ -507,8 +506,11 @@ Function Download-VCFRelease {
 
     # Download Bundle
     $bundle.GetEnumerator() | ForEach-Object {
-        My-Logger "Starting download for $($_.key) component ..."
-        Download-VCFBundle -BundleId $_.value
+        # SDDDCm is NOT required for VVF SKU
+        if($VCFInstallerProductSKU -ne "VVF" -or $_.key -ne "SDDC_MANAGER") {
+            My-Logger "Starting download for $($_.key) component ..."
+            Download-VCFBundle -BundleId $_.value
+        }
     }
 
     while(1) {
@@ -523,7 +525,7 @@ Function Download-VCFRelease {
                 My-Logger "DEBUG: Body: $body"
             }
 
-            $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 5 -Headers $headers
+            $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 30 -Headers $headers
             if($requests.StatusCode -eq 200) {
                 $downloadStatus = ($requests.Content | ConvertFrom-Json).elements.downloadStatus
 
@@ -566,6 +568,11 @@ if($preCheck -eq 1) {
 
     if(!(Test-Path $VCFInstallerOVA)) {
         Write-Host -ForegroundColor Red "`nUnable to find $VCFInstallerOVA ...`n"
+        exit
+    }
+
+    if(!(Test-Path $NSXTManagerOVA) -and $deployNSXManager -eq 1) {
+        Write-Host -ForegroundColor Red "`nUnable to find $NSXTManagerOVA ...`n"
         exit
     }
 
@@ -624,6 +631,10 @@ if($confirmDeployment -eq 1) {
     Write-Host -ForegroundColor White $VCFInstallerVMName
     Write-Host -NoNewline -ForegroundColor Green "IP Address: "
     Write-Host -ForegroundColor White $VCFInstallerIP
+	Write-Host -NoNewline -ForegroundColor Green "vCPU: "
+	Write-Host -ForegroundColor White $VCFInstallerVMvCPU
+	Write-Host -NoNewline -ForegroundColor Green "vMEM: "
+	Write-Host -ForegroundColor White "$VCFInstallerVMvMEM GB"
 
     if($deployNestedESXiVMsForMgmt -eq 1) {
         Write-Host -ForegroundColor Yellow "`n---- vESXi Configuration for $VCFInstallerProductSKU Management Domain ----"
@@ -655,6 +666,21 @@ if($confirmDeployment -eq 1) {
         Write-Host -ForegroundColor White "$NestedESXiWLDCachingvDisk GB"
         Write-Host -NoNewline -ForegroundColor Green "Capacity VMDK: "
         Write-Host -ForegroundColor White "$NestedESXiWLDCapacityvDisk GB"
+    }
+	
+    if($NSXuseExistingDeploymentNSX -eq 1 -and $deployNSXManager -eq 1) { 
+        Write-Host -ForegroundColor Yellow "`n---- NSX Local Configurations----"
+		Write-Host -NoNewline -ForegroundColor Green "NSX VIP Hostname/IP Address: "
+		Write-Host -ForegroundColor White $NSXManagerVIPHostname $NSXManagerVIPIP
+        Write-Host -NoNewline -ForegroundColor Green "NSX Hostname(s): "
+        Write-Host -ForegroundColor White ($NSXManagerHostnameToIPsForManagementDomain.Keys|Sort-Object)
+		Write-Host -NoNewline -ForegroundColor Green "NSX IP Address(s): "
+		Write-Host -ForegroundColor White ($NSXManagerHostnameToIPsForManagementDomain.Values|Sort-Object)
+        Write-Host -NoNewline -ForegroundColor Green "vCPU: "
+        Write-Host -ForegroundColor White $NSXTMgrvCPU
+        Write-Host -NoNewline -ForegroundColor Green "vMEM: "
+        Write-Host -ForegroundColor White "$NSXTMgrvMEM GB"
+
     }
 
     Write-Host -ForegroundColor Yellow "`n---- Vlan Configuration for Management Domain ---- "
@@ -703,6 +729,8 @@ if($confirmDeployment -eq 1) {
 		Write-Host -NoNewline -ForegroundColor Green "ESXi Gateway Wld Domain: "
 		Write-Host -ForegroundColor White $VMNestedESXiWldGateway
 	}
+	Write-Host -NoNewline -ForegroundColor Green "VM Domain: "
+	Write-Host -ForegroundColor White $VMDomain
     Write-Host -NoNewline -ForegroundColor Green "DNS: "
     Write-Host -ForegroundColor White $VMDNS
     Write-Host -NoNewline -ForegroundColor Green "NTP: "
@@ -814,26 +842,26 @@ if($updateVCFInstallerConfig -eq 1) {
         }
     }
 
-    if($VCSAuseExistingDeploymentvCenter -eq 1-and $NestedESXiHostnameToIPsForManagementDomain.count -eq 1) {
-        # Remove Guardrail 3 nodes VSAN requirements
-        $script += "sed -i '81,94d' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/operations/import/import.json`n"
+    if($VCSAuseExistingDeploymentvCenter -eq 1 -and $NestedESXiHostnameToIPsForManagementDomain.count -lt 3) {
+        # Remove Guardrail 3 nodes VSAN requirements if less than 3 ESXi nodes are actively used in the sample (non-actively used hostname/IP can be commented)
+		$script += "vsan=""conforming-cluster-present-check""`n"
+		$script += "jq --arg vsan `$vsan` 'del(.children[]?.externalValidations[]? | select(.id == `$vsan`))' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/operations/import/import.json >import.tmp && mv import.tmp /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/operations/import/import.json`n"
     }
     
-    if($VCSAuseExistingDeploymentvCenter -eq 1-and $NSXuseExistingDeploymentNSX = 1) {
-        # Remove Guardrail 3 nodes NSX requirements
-        $script += "sed -i '13,19d' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/common/resourcestates/nsx-import-base.json`n"
+    if($VCSAuseExistingDeploymentvCenter -eq 1 -and $NSXuseExistingDeploymentNSX -eq 1 -and $NSXManagerHostnameToIPsForManagementDomain.count -lt 3) {
+        # Remove Guardrail 3 nodes NSX requirements if less than 3 NSX nodes are actively used in the sample (non-actively used hostname/IP can be commented)
+		$script += "nsx=""import-existing-nsxt-cluster-size""`n"
+        $script += "jq --arg nsx `$nsx` 'del(.constraints[]? | select(.id == `$nsx`))' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/common/resourcestates/nsx-import-base.json >nsx-import-base.tmp && mv nsx-import-base.tmp /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/common/resourcestates/nsx-import-base.json`n"
     }
 
     $script += "echo 'y' | '/opt/vmware/vcf/operationsmanager/scripts/cli/sddcmanager_restart_services.sh'`n"
     $script | Out-File $scriptName
 
-	if (-not (Test-Path -Path /tmp/${scriptName})) {
-		My-Logger "Transfering configuration shell script ($scriptName) to VCF Installer VM if not already done ......"
-		$vcfVM = Get-VM -Name $VCFInstallerVMName -Server $viConnection -Location $cluster  | Where-Object {$_.ResourcePool.Id -eq $rp.Id} 
-		Copy-VMGuestFile -Server $viConnection -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword -LocalToGuest -Source ${scriptName} -Destination /tmp/${scriptName} -Force | Out-Null
-		My-Logger "Running configuration shell script on VCF Installer VM ..."
-		Invoke-VMScript -ScriptText "bash /tmp/${scriptName}" -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword | Out-Null
-	}
+	My-Logger "Transfering configuration shell script ($scriptName) to VCF Installer VM (in case of reusing the same Lab vApp be aware to set this variable updateVCFInstallerConfig = 0) ..."
+	$vcfVM = Get-VM -Name $VCFInstallerVMName -Server $viConnection -Location $cluster  | Where-Object {$_.ResourcePool.Id -eq $rp.Id} 
+	Copy-VMGuestFile -Server $viConnection -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword -LocalToGuest -Source ${scriptName} -Destination /tmp/$scriptName | Out-Null
+	My-Logger "Running configuration shell script on VCF Installer VM ..."
+	Invoke-VMScript -ScriptText "bash /tmp/${scriptName}" -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword -ScriptType Bash | Out-Null
 
     Start-Sleep -Seconds 120
 }
@@ -1027,7 +1055,7 @@ if($setVLanId -eq 1) {
             Start-Sleep 60
             } until ($ping -contains "True")
             
-            $viConnectionESXiMgmt = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
+            $viConnectionESXiMgmt = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue
             My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for VM Network"
             Get-VirtualPortgroup -Server $viConnectionESXiMgmt -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
 		}
@@ -1044,7 +1072,7 @@ if($setVLanId -eq 1) {
             Start-Sleep 60
             } until ($ping -contains "True")
             
-            $viConnectionESXiWld = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile 
+            $viConnectionESXiWld = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue 
             My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for VM Network"
             Get-VirtualPortgroup -Server $viConnectionESXiWld -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
 		}
@@ -1332,15 +1360,15 @@ if( $VCSAuseExistingDeploymentvCenter -eq 1) {
             $vmhds = Get-VM -Name $VCSAName -Server $vc | Get-HardDisk -WarningAction SilentlyContinue
             Set-SpbmEntityConfiguration -Configuration (Get-SpbmEntityConfiguration $vmhds -Server $vc ) -StoragePolicy $fttVsanPolicy | Out-File -Append -LiteralPath $verboseLogFile
         }
-        #Start-Sleep -Seconds 120
-
-        My-Logger "Disconnecting from new VCSA ..."
-        Disconnect-VIServer $vc -Force -Confirm:$false
     }
 
     if($configureVDS -eq 1) {
-        My-Logger "Connecting to the new VCSA ..."
-        $vc = Connect-VIServer $VCSAIP -User $VCSASSOUserName -Password $VCSASSOPassword -WarningAction SilentlyContinue
+        if(!($vc = Connect-VIServer $VCSAIP -User $VCSASSOUserName -Password $VCSASSOPassword -WarningAction SilentlyContinue)) {
+            Write-Host -ForegroundColor Red "Unable to connect to new VCSA, please check the deployment"
+            exit
+        } else {
+            My-Logger "Successfully logged into new VCSA $vc ..."
+        }
 
         # vmnic0 = Management on VSS -> Futur Management on VDS (uplink2)
         # vmnic1 = Management on VDS (uplink1)
@@ -1386,8 +1414,6 @@ if( $VCSAuseExistingDeploymentvCenter -eq 1) {
             Get-VM -Name $VCSAName -Server $vc | Get-NetworkAdapter | Set-NetworkAdapter -Portgroup $dvPortGroup -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
         }
         
-        #Start-Sleep -Seconds 30
-        
         if($migrateVmkernelToVDS -eq 1) {
             $dvportgroupmgmt = Get-VDPortgroup -name $VCSAMgmtPortgroupName -Server $vc
 
@@ -1425,14 +1451,15 @@ if( $VCSAuseExistingDeploymentvCenter -eq 1) {
                 Remove-VirtualSwitch -VirtualSwitch $vswitch -Server $vc -confirm:$false
             }
         }
-
-        My-Logger "Disconnecting from new VCSA ..."
-        Disconnect-VIServer $vc -Force -Confirm:$false
     }
 
     if($finalCleanUp -eq 1) {
-        My-Logger "Connecting to the new VCSA ..."
-        $vc = Connect-VIServer $VCSAIP -User $VCSASSOUserName -Password $VCSASSOPassword -WarningAction SilentlyContinue
+        if(!($vc = Connect-VIServer $VCSAIP -User $VCSASSOUserName -Password $VCSASSOPassword -WarningAction SilentlyContinue)) {
+            Write-Host -ForegroundColor Red "Unable to connect to new VCSA, please check the deployment"
+            exit
+        } else {
+            My-Logger "Successfully logged into new VCSA $vc ..."
+        }
 
         My-Logger "Clearing default VSAN Health Check Alarms, not applicable in Nested ESXi env ..."
         $alarmMgr = Get-View AlarmManager -Server $vc
@@ -1462,80 +1489,86 @@ if( $VCSAuseExistingDeploymentvCenter -eq 1) {
 	
         Get-Cluster $VCSAClusterName -Server $vc -ErrorAction Ignore | Set-Cluster -DrsAutomationLevel FullyAutomated -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
 		Start-Sleep -Seconds 30
-
-        My-Logger "Disconnecting from new VCSA ..."
-        Disconnect-VIServer $vc -Confirm:$false
     }
 }
 
 if( $NSXuseExistingDeploymentNSX -eq 1) {
     if($deployNSXManager -eq 1) {
-        My-Logger "Connecting to the new VCSA ..."
-        $vc = Connect-VIServer $VCSAIP -User $VCSASSOUserName -Password $VCSASSOPassword -WarningAction SilentlyContinue
-        $cluster = Get-Cluster $VCSAClusterName -Server $vc 
-        $datastore = Get-Datastore -Name $VSANDatastoreName -Server $vc | Select-Object -First 1
-        $vmhost = $cluster | Get-VMHost | Select -First 1
-        # Deploy NSX Manager
-        $nsxMgrOvfConfig = Get-OvfConfiguration $NSXTManagerOVA
-        $nsxMgrOvfConfig.DeploymentOption.Value = $NSXManagerSize
-        $nsxMgrOvfConfig.NetworkMapping.Network_1.value = $VCSAVMNetworkPortgroupName
-
-        $nsxMgrOvfConfig.Common.nsx_role.Value = "NSX Manager"
-        $nsxMgrOvfConfig.Common.nsx_hostname.Value = $NSXManagerNode1Hostname
-        $nsxMgrOvfConfig.Common.nsx_ip_0.Value = $NSXManagerNode1IP
-        $nsxMgrOvfConfig.Common.nsx_netmask_0.Value = $VMNetmask
-        $nsxMgrOvfConfig.Common.nsx_gateway_0.Value = $VMGateway
-        $nsxMgrOvfConfig.Common.nsx_dns1_0.Value = $VMDNS
-        $nsxMgrOvfConfig.Common.nsx_domain_0.Value = $VMDomain
-        $nsxMgrOvfConfig.Common.nsx_ntp_0.Value = $VMNTP
-
-        if($NSXSSHEnable -eq "true") {
-            $NSXSSHEnableVar = $true
+        if(!($vc = Connect-VIServer $VCSAIP -User $VCSASSOUserName -Password $VCSASSOPassword -WarningAction SilentlyContinue)) {
+            Write-Host -ForegroundColor Red "Unable to connect to new VCSA, please check the deployment"
+            exit
         } else {
-            $NSXSSHEnableVar = $false
+            My-Logger "Successfully logged into new VCSA $vc ..."
         }
-        $nsxMgrOvfConfig.Common.nsx_isSSHEnabled.Value = $NSXSSHEnableVar
-        if($NSXEnableRootLogin -eq "true") {
-            $NSXRootPasswordVar = $true
-        } else {
-            $NSXRootPasswordVar = $false
+		$cluster = Get-Cluster $VCSAClusterName -Server $vc 
+		$datastore = Get-Datastore -Name $VSANDatastoreName -Server $vc | Select-Object -First 1
+		$vmhost = $cluster | Get-VMHost | Select -First 1
+		
+        $NSXManagerHostnameToIPsForManagementDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+            $VMName = $_.Key
+            $VMIPAddress = $_.Value
+
+            # Deploy NSX Manager
+            $nsxMgrOvfConfig = Get-OvfConfiguration $NSXTManagerOVA
+            $nsxMgrOvfConfig.DeploymentOption.Value = $NSXManagerSize
+            $nsxMgrOvfConfig.NetworkMapping.Network_1.value = $VCSAVMNetworkPortgroupName
+
+            $nsxMgrOvfConfig.Common.nsx_role.Value = "NSX Manager"
+            $nsxMgrOvfConfig.Common.nsx_hostname.Value = "${VMName}.${VMDomain}"
+            $nsxMgrOvfConfig.Common.nsx_ip_0.Value = $VMIPAddress
+            $nsxMgrOvfConfig.Common.nsx_netmask_0.Value = $VMNetmask
+            $nsxMgrOvfConfig.Common.nsx_gateway_0.Value = $VMGateway
+            $nsxMgrOvfConfig.Common.nsx_dns1_0.Value = $VMDNS
+            $nsxMgrOvfConfig.Common.nsx_domain_0.Value = $VMDomain
+            $nsxMgrOvfConfig.Common.nsx_ntp_0.Value = $VMNTP
+
+            if($NSXSSHEnable -eq "true") {
+                $NSXSSHEnableVar = $true
+            } else {
+                $NSXSSHEnableVar = $false
+            }
+            $nsxMgrOvfConfig.Common.nsx_isSSHEnabled.Value = $NSXSSHEnableVar
+            if($NSXEnableRootLogin -eq "true") {
+                $NSXRootPasswordVar = $true
+            } else {
+                $NSXRootPasswordVar = $false
+            }
+            $nsxMgrOvfConfig.Common.nsx_allowSSHRootLogin.Value = $NSXRootPasswordVar
+
+            $nsxMgrOvfConfig.Common.nsx_passwd_0.Value = $NSXRootPassword
+            $nsxMgrOvfConfig.Common.nsx_cli_username.Value = $NSXAdminUsername
+            $nsxMgrOvfConfig.Common.nsx_cli_passwd_0.Value = $NSXAdminPassword
+            $nsxMgrOvfConfig.Common.nsx_cli_audit_username.Value = $NSXAuditUsername
+            $nsxMgrOvfConfig.Common.nsx_cli_audit_passwd_0.Value = $NSXAuditPassword
+
+            My-Logger "Deploying NSX Manager VM $VMName ..."
+            $nsxmgr_vm = Import-VApp -Source $NSXTManagerOVA -OvfConfiguration $nsxMgrOvfConfig -Name $VMName -Location $cluster -VMHost $vmhost -Datastore $datastore -DiskStorageFormat thin -Force
+
+            My-Logger "Updating vCPU Count to $NSXTMgrvCPU & vMEM to $NSXTMgrvMEM GB and Disabling Reservations ..."
+            Set-VM -Server $vc -VM $nsxmgr_vm -NumCpu $NSXTMgrvCPU -MemoryGB $NSXTMgrvMEM -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
+
+            Get-VM -Server $vc -Name $nsxmgr_vm | Get-VMResourceConfiguration | Set-VMResourceConfiguration -CpuReservationMhz 0 | Out-File -Append -LiteralPath $verboseLogFile
+            
+            Get-VM -Server $vc -Name $nsxmgr_vm | Get-VMResourceConfiguration | Set-VMResourceConfiguration -MemReservationGB 0 | Out-File -Append -LiteralPath $verboseLogFile    
+            
+            My-Logger "Allow the guest operating system to retrieve entropy directly from the ESXi host and Powering On $nsxmgr_vm ..."
+            Get-VM -Server $vc -Name $nsxmgr_vm | New-AdvancedSetting -Name "isolation.tools.getEntropy.disable" -value "FALSE" -confirm:$false -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
+
+            $nsxmgr_vm | Start-Vm -RunAsync | Out-Null
         }
-        $nsxMgrOvfConfig.Common.nsx_allowSSHRootLogin.Value = $NSXRootPasswordVar
-
-        $nsxMgrOvfConfig.Common.nsx_passwd_0.Value = $NSXRootPassword
-        $nsxMgrOvfConfig.Common.nsx_cli_username.Value = $NSXAdminUsername
-        $nsxMgrOvfConfig.Common.nsx_cli_passwd_0.Value = $NSXAdminPassword
-        $nsxMgrOvfConfig.Common.nsx_cli_audit_username.Value = $NSXAuditUsername
-        $nsxMgrOvfConfig.Common.nsx_cli_audit_passwd_0.Value = $NSXAuditPassword
-
-        My-Logger "Deploying NSX Manager VM $NSXTMgrDisplayName ..."
-        $nsxmgr_vm = Import-VApp -Source $NSXTManagerOVA -OvfConfiguration $nsxMgrOvfConfig -Name $NSXManagerNode1DisplayName -Location $cluster -VMHost $vmhost -Datastore $datastore -DiskStorageFormat thin -Force
-
-        My-Logger "Updating vCPU Count to $NSXTMgrvCPU & vMEM to $NSXTMgrvMEM GB ..."
-        Set-VM -Server $vc -VM $nsxmgr_vm -NumCpu $NSXTMgrvCPU -MemoryGB $NSXTMgrvMEM -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
-
-        My-Logger "Disabling vCPU Reservation ..."
-        Get-VM -Server $vc -Name $nsxmgr_vm | Get-VMResourceConfiguration | Set-VMResourceConfiguration -CpuReservationMhz 0 | Out-File -Append -LiteralPath $verboseLogFile
-        
-        My-Logger "Disabling vMEM Reservation ..."
-        Get-VM -Server $vc -Name $nsxmgr_vm | Get-VMResourceConfiguration | Set-VMResourceConfiguration -MemReservationGB 0 | Out-File -Append -LiteralPath $verboseLogFile    
-        
-        My-Logger "Allow the guest operating system to retrieve entropy directly from the ESXi host ..."
-        Get-VM -Server $vc -Name $nsxmgr_vm | New-AdvancedSetting -Name "isolation.tools.getEntropy.disable" -value "FALSE" -confirm:$false -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
-
-        My-Logger "Powering On $NSXTMgrDisplayName ..."
-        $nsxmgr_vm | Start-Vm -RunAsync | Out-Null
-
     }
 
     if($postDeployNSXConfig -eq 1) {
         # First boot took 24min so be patient ..."
+        $NSXManagerNode1IP = $($NSXManagerHostnameToIPsForManagementDomain.Values|Sort-Object) | Select-Object -Index 0
+		
         do {
-            My-Logger "waiting 4min before repinging $NSXManagerNode1IP"
+            My-Logger "waiting 12min ..."
             $ping = Test-Connection $NSXManagerNode1IP -Delay 240 -Quiet
         } until ($ping -contains "True")
 		
         My-Logger "Connecting to NSX Manager for post-deployment configuration ..."
+		$NSXManagerNode1Hostname = ($($NSXManagerHostnameToIPsForManagementDomain.Keys|Sort-Object) | Select-Object -Index 0) + ".${VMDomain}"
         if(!(Connect-NsxtServer -Server $NSXManagerNode1Hostname -Username $NSXAdminUsername -Password $NSXAdminPassword -WarningAction SilentlyContinue)) {
             Write-Host -ForegroundColor Red "Unable to connect to NSX-T Manager, please check the deployment"
             exit
@@ -1545,8 +1578,9 @@ if( $NSXuseExistingDeploymentNSX -eq 1) {
 
         $runHealth=$true
         $runCEIP=$true
-        $runAddVC=$true
 		$runSetNSXVIP=$true
+		$runNSXCluster=$true
+        $runAddVC=$true
 
         if($runHealth) {
             My-Logger "Verifying health of all NSX Manager/Controller Nodes ..."
@@ -1586,6 +1620,94 @@ if( $NSXuseExistingDeploymentNSX -eq 1) {
             $ceipAgreementSpec.telemetry_agreement_displayed = $true
             $agreementResult = $ceipAgreementService.update($ceipAgreementSpec)
         }
+		
+		if($runSetNSXVIP) {
+			My-Logger "Set NSX Managers Cluster Virtual IP via API"
+            $NSXManagerNode1Hostname = ($($NSXManagerHostnameToIPsForManagementDomain.Keys|Sort-Object) | Select-Object -Index 0) + ".${VMDomain}"
+			$pair = "${NSXAdminUsername}:${NSXAdminPassword}"
+			$bytes = [System.Text.Encoding]::ASCII.GetBytes($pair)
+			$base64 = [System.Convert]::ToBase64String($bytes)
+
+			$headers = @{
+				"Authorization"="basic $base64"
+				"Content-Type"="application/json"
+				"Accept"="application/json"
+			}
+
+			$nsxVipUrl = "https://$NSXManagerNode1Hostname/api/v1/cluster/api-virtual-ip?action=set_virtual_ip&ip_address=$NSXManagerVIPIP&force=true"
+			$requests = Invoke-WebRequest -Uri $nsxVipUrl -Method POST -Headers $headers -SkipCertificateCheck
+		}
+		
+		Start-Sleep 30
+		
+		if($runNSXCluster) {
+			if ($NSXManagerHostnameToIPsForManagementDomain.count -eq 3) {
+				$NSXManagerNode1IP = $($NSXManagerHostnameToIPsForManagementDomain.Values|Sort-Object) | Select-Object -Index 0
+				$NSXManagerNode2IP = $($NSXManagerHostnameToIPsForManagementDomain.Values|Sort-Object) | Select-Object -Index 1
+				$NSXManagerNode3IP = $($NSXManagerHostnameToIPsForManagementDomain.Values|Sort-Object) | Select-Object -Index 2
+				$clusterService = Get-NsxtService -Name "com.vmware.nsx.cluster"
+				$clusterId = $clusterService.get().cluster_id
+				$clusterNodesApiThumbprint = $clusterService.get().nodes.api_listen_addr.certificate_sha256_thumbprint
+
+				$json = [pscustomobject] @{
+					"cluster_id" = $clusterId
+					"ip_address" = $NSXManagerNode1IP
+					"username" = $NSXAdminUsername
+					"password" = $NSXAdminPassword
+					"certificate_sha256_thumbprint" = $clusterNodesApiThumbprint
+				}
+
+				$body = $json | ConvertTo-Json -Depth 10
+
+				$pair = "${NSXAdminUsername}:${NSXAdminPassword}"
+				$bytes = [System.Text.Encoding]::ASCII.GetBytes($pair)
+				$base64 = [System.Convert]::ToBase64String($bytes)
+
+				$headers = @{
+					"Authorization"="basic $base64"
+					"Content-Type"="application/json"
+					"Accept"="application/json"
+				}
+
+				$nodes = @($NSXManagerNode2IP, $NSXManagerNode3IP)
+
+				foreach ($node in $nodes) {
+
+					$joinclusterUrl = "https://$node/api/v1/cluster?action=join_cluster"
+
+
+					if($debug) {
+						"URL: $joinclusterUrl" | Out-File -Append -LiteralPath $verboseLogFile
+						"Headers: $($headers | Out-String)" | Out-File -Append -LiteralPath $verboseLogFile
+						"Body: $body" | Out-File -Append -LiteralPath $verboseLogFile
+					}
+
+					try {
+						My-Logger "$node Join NSX Manager Cluster  ..."
+						if($PSVersionTable.PSEdition -eq "Core") {
+							$requests = Invoke-WebRequest -Uri $joinclusterUrl -Body $body -Method POST -Headers $headers -SkipCertificateCheck
+							Start-Sleep 20
+						} else {
+							$requests = Invoke-WebRequest -Uri $joinclusterUrl -Body $body -Method POST -Headers $headers
+							Start-Sleep 20
+						}
+					} catch {
+						Write-Error "Error in joining NSX Manager Cluster"
+						Write-Error "`n($_.Exception.Message)`n"
+						break
+					}
+					
+					if($requests.StatusCode -eq 200) {
+						My-Logger "Successfully joined $node to NSX Manager Cluster"
+					} else {
+						My-Logger "Unknown State: "
+						$requests | Out-File -Append -LiteralPath $verboseLogFile
+						}
+				}
+			}
+		}
+		
+		Start-Sleep 20
 
         if($runAddVC) {
             $vcsaFQDN = $VCSAName + "." + $VMDomain
@@ -1615,22 +1737,6 @@ if( $NSXuseExistingDeploymentNSX -eq 1) {
                     Start-Sleep 30
             }
         }
-		
-		if($runSetNSXVIP) {
-			My-Logger "Set NSX Managers Cluster Virtual IP via API"
-			$pair = "${NSXAdminUsername}:${NSXAdminPassword}"
-			$bytes = [System.Text.Encoding]::ASCII.GetBytes($pair)
-			$base64 = [System.Convert]::ToBase64String($bytes)
-
-			$headers = @{
-				"Authorization"="basic $base64"
-				"Content-Type"="application/json"
-				"Accept"="application/json"
-			}
-
-			$nsxVipUrl = "https://$NSXManagerNode1Hostname/api/v1/cluster/api-virtual-ip?action=set_virtual_ip&ip_address=$NSXManagerVIPIP&force=true"
-			$requests = Invoke-WebRequest -Uri $nsxVipUrl -Method POST -Headers $headers -SkipCertificateCheck
-		}
 
         My-Logger "Disconnecting from NSX Manager ..."
         Disconnect-NsxtServer -Confirm:$false
@@ -1696,13 +1802,17 @@ if($moveVMsIntovApp -eq 1) {
 
 if($generateMgmtJson -eq 1) {
     $vcsaFQDN = $VCSAName + "." + $VMDomain
-    # For Convert existing vCenter a guardrails requires VMKernel ESX Management to be vMotion Enabled, below 'if' for switching management network variable and gateway is hardcoded here !
+	$NSXManagerNode1IP = $($NSXManagerHostnameToIPsForManagementDomain.Values|Sort-Object) | Select-Object -Index 0
+	$NSXManagerNode1Hostname = ($($NSXManagerHostnameToIPsForManagementDomain.Keys|Sort-Object) | Select-Object -Index 0) + ".${VMDomain}"
+	$NSXManagerNode2Hostname = ($($NSXManagerHostnameToIPsForManagementDomain.Keys|Sort-Object) | Select-Object -Index 1) + ".${VMDomain}"
+	$NSXManagerNode3Hostname = ($($NSXManagerHostnameToIPsForManagementDomain.Keys|Sort-Object) | Select-Object -Index 2) + ".${VMDomain}"	
+    # For Convert existing vCenter a guardrails requires VMKernel ESX Management to be vMotion Enabled, below 'if' for switching to management network CIDR variable and gateway.
     if( $VCSAuseExistingDeploymentvCenter -eq 1) {
         $vcsaThumbprint = (Get-SSLThumbprint256 -URL https://${VCSAIP})
         $vcsaUseExisting = $true
         $esxivMotionNetwork = $NestedESXiManagementNetworkCidr.split("/")[0]
         $esxivMotionNetworkOctects = $esxivMotionNetwork.split(".")
-        $esxivMotionGateway = ($esxivMotionNetworkOctects[0..2] -join '.') + ".53"
+        $esxivMotionGateway = ($esxivMotionNetworkOctects[0..2] -join '.') + ".${VMNestedESXiMgmtGateway}"
         $esxivMotionStart = ($esxivMotionNetworkOctects[0..2] -join '.') + ".101"
         $esxivMotionEnd = ($esxivMotionNetworkOctects[0..2] -join '.') + ".116"
     } else {
@@ -1717,7 +1827,7 @@ if($generateMgmtJson -eq 1) {
     
     if( $NSXuseExistingDeploymentNSX -eq 1) {
         $nsxUseExisting = $true
-		$nsxThumbprint =   (Get-SSLThumbprint256 -URL https://${NSXManagerNode1IP})
+		$nsxThumbprint = (Get-SSLThumbprint256 -URL https://${NSXManagerNode1IP})
     } else {
         $nsxUseExisting = $null
     }
@@ -1826,6 +1936,14 @@ if($generateMgmtJson -eq 1) {
                 @{
 					"hostname" = $NSXManagerNode1Hostname
 				}
+                if($NSXManagerHostnameToIPsForManagementDomain.count -eq 3){
+                    @{
+                        "hostname" = $NSXManagerNode2Hostname
+                    }
+                    @{
+                        "hostname" = $NSXManagerNode3Hostname
+                    }
+                }
             )
             "vipFqdn" = $NSXManagerVIPHostname
             "useExistingDeployment" = $nsxUseExisting
@@ -2110,26 +2228,27 @@ if($VCSAuseExistingDeploymentvCenter -eq 1) {
 			}
 		}
 
-        if($VCSAuseExistingDeploymentvCenter -eq 1-and $NestedESXiHostnameToIPsForManagementDomain.count -eq 1) {
-            # Remove Guardrail 3 nodes VSAN requirements
-            $script += "sed -i '81,94d' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/operations/import/import.json`n"
-        }
-        
-        if($VCSAuseExistingDeploymentvCenter -eq 1-and $NSXuseExistingDeploymentNSX = 1) {
-            # Remove Guardrail 3 nodes NSX requirements
-            $script += "sed -i '13,19d' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/common/resourcestates/nsx-import-base.json`n"
-        }
+		if($VCSAuseExistingDeploymentvCenter -eq 1 -and $NestedESXiHostnameToIPsForManagementDomain.count -lt 3) {
+			# Remove Guardrail 3 nodes VSAN requirements if count less than 3 ESXi nodes are actively used in the sample (non-actively used hostname/IP can be commented in the array)
+			$script += "vsan=""conforming-cluster-present-check""`n"
+			$script += "jq --arg vsan `$vsan` 'del(.children[]?.externalValidations[]? | select(.id == `$vsan`))' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/operations/import/import.json >import.tmp && mv import.tmp /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/operations/import/import.json`n"
+		}
+		
+		if($VCSAuseExistingDeploymentvCenter -eq 1 -and $NSXuseExistingDeploymentNSX -eq 1 -and $NSXManagerHostnameToIPsForManagementDomain.count -lt 3) {
+			# Remove Guardrail 3 nodes NSX requirements if less than 3 NSX nodes are actively used in the sample (non-actively used hostname/IP can be commented)
+			$script += "nsx=""import-existing-nsxt-cluster-size""`n"
+			$script += "jq --arg nsx `$nsx` 'del(.constraints[]? | select(.id == `$nsx`))' /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/common/resourcestates/nsx-import-base.json >nsx-import-base.tmp && mv nsx-import-base.tmp /opt/vmware/vcf/operationsmanager/scripts/assessment/guardrails/common/resourcestates/nsx-import-base.json`n"
+		}
         
 		$script | Out-File $scriptName
 
-		if (-not (Test-Path -Path /tmp/${scriptName})) {
-			My-Logger "Transfering configuration shell script ($scriptName) to SDDC Manager VM if not already done ..."
-			Copy-VMGuestFile -Server $viConnection -VM $vcfVM -GuestUser "root" -GuestPassword $SddcManagerRootPassword -LocalToGuest -Source ${scriptName} -Destination /tmp/${scriptName} -Force | Out-Null
-			My-Logger "Running configuration shell script on SDDC Manager VM ..."
-			Invoke-VMScript -ScriptText "bash /tmp/${scriptName}" -VM $vcfVM -GuestUser "root" -GuestPassword $SddcManagerRootPassword | Out-Null
-		}
+		My-Logger "Transfering configuration shell script ($scriptName) to SDDC Manager VM (in case of reusing the same Lab vApp be aware to set this variable updateSddcManagerConfig = 0) ..."
+		Copy-VMGuestFile -Server $viConnection -VM $vcfVM -GuestUser "root" -GuestPassword $SddcManagerRootPassword -LocalToGuest -Source ${scriptName} -Destination /tmp/${scriptName} -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
+		My-Logger "Running configuration shell script on SDDC Manager VM ..."
+		Invoke-VMScript -ScriptText "bash /tmp/${scriptName}" -VM $vcfVM -GuestUser "root" -GuestPassword $SddcManagerRootPassword | Out-File -Append -LiteralPath $verboseLogFile
+
 		My-Logger "Disconnecting from new VCSA ..."
-        Disconnect-VIServer $vc -Confirm:$false
+        Disconnect-VIServer -Confirm:$false
 	}
 }
 
