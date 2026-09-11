@@ -21,6 +21,24 @@
 This script makes it very easy for anyone to deploy a "basic" VMware Cloud Foundation (VCF) 9.x Fleet OR VMware vSphere Foundation (VVF) in a Nested Lab environment for learning and educational purposes.
 
 ## Changelog
+* **11/09/2026**
+  * Related [Blog Post](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-vcf-9.1-fleet-deployment-converge-fork-branch/)
+  * Changed sample configuration NSX input hostname/IP moved to an array similar to ESX to easily count 
+    ```
+    $NSXManagerHostnameToIPsForManagementDomain = @{
+      "nsx01a" = "10.11.10.15"
+      "nsx02a" = "10.11.10.16"
+      "nsx03a" = "10.11.10.17"
+    }
+    ```
+  * Added officially suported VCF Convert vCenter with NSX using three NSX and formed NSX Cluster
+  * Added NSX VM override
+    **$NSXTMgrvCPU** = "6" # override default medium size
+    **$NSXTMgrvMEM** = "16" # override default medium size
+  * Added support for all VCF 9.0.x for guardrails removal workaround by using json aware tool when less 3 ESX or NSX
+  * Removed the Test-Path that was replacing -Force on Copy-VMGuestFile by a reminder in script execution "in case of reusing the same Lab vApp be aware to set this variable **updateVCFInstallerConfig** = 0" and similarly **$updateSddcManagerConfig** = 0
+  * Updated sample configuration example to use NestedESX and vCenter in version 8.0u3h and NSX 4.2.3.2 both still in VCF 5.2.2.0 because VCF 5.2.3 came after VCF 9.0.2
+
 * **08/13/2026**
   * Related [Blog Post](https://strivevirtually.net/post/vcf-9.0-3.-isolated-workload-domain-automated-deployment-in-1h30/)
   * Added in sample-abbed-vcf-9.0.2-vlan.ps1 variable **$VCFWorkloadDomainVCSASSODomainName** replaced hardcoded "vsphere.local" to allow [Isolated Workload Domain](https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/building-your-private-cloud-infrastructure/working-with-workload-domains/deploy-a-vi-workload-domain-using-the-sddc-manager-ui.html#:~:text=isolated)
