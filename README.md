@@ -21,6 +21,14 @@
 This script makes it very easy for anyone to deploy a "basic" VMware Cloud Foundation (VCF) 9.x Fleet OR VMware vSphere Foundation (VVF) in a Nested Lab environment for learning and educational purposes.
 
 ## Changelog
+* **27/09/2026**
+  * Related [Blog Post](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-vcf-9.1.1-fleet-deployment/)
+  * Updated to support VLAN for VCF 9.1.1 greenfield
+  * Added variable **$VCSAVDSSeparateNSXSwitch** to make the VDS profile NSX_SEPARATION using the vmnic2 and vmnic3 for compliance with reglemented Standard (PCI-DSS/HIPAA/GDPR...)
+    - updated operationalmode from "ENS" (Enhanced DataPath Dedicated) where you need to know your workload (packet/MTU) size and assign cores exactly right like in Telco to "ENS_INTERRUPT" (Enhanced DataPath Standard) [**watch Samuel Kommu explain how EDP Standard it's automatically tunned up to hundreds Gbit/s Nic**](https://www.vmware.com/explore/video/6403822316112)
+  * Reverted to Offline Depot configuration using **$VCFInstallerDepotUrl** so that http webserver will now be un-authtenticated (essentially ommit username and password if using python http_server_auth.py)
+    - updated to DepotUrl because software depot service deployment fail warning to retrieve certification chain of http and also authenticated http workaround don't survive VCF Installer reboot in VCF 9.1.1 release, maybe also in prior releases
+
 * **11/09/2026**
   * Related [Blog Post](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-vcf-9.1-fleet-deployment-converge-fork-branch/)
   * Changed sample configuration NSX input hostname/IP moved to an array similar to ESX to easily count 
