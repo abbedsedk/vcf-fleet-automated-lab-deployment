@@ -21,6 +21,8 @@ if ($EnvConfigFile -and (Test-Path $EnvConfigFile)) {
 # VCF Instance Deployment JSON
 $random_string = -join ((48..57) + (97..122) | Get-Random -Count 8 | ForEach-Object {[char]$_})
 
+#$random_string = "bkjwo4hi" # uncomment to reuse the script on the same vApp with its generated Deployment Id and comment the original $random_string
+
 $VAppName = "Nested-${VCFInstallerProductSKU}-9-Lab-${VAppLabel}-${random_string}"
 $VCFManagementDomainJSONFile = "$(${VCFInstallerProductSKU}.toLower())-mgmt-${random_string}.json"
 $verboseLogFile = "vcf-9-lab-deployment-${random_string}.log"
@@ -30,13 +32,20 @@ $preCheck = 1
 $confirmDeployment = 1
 $deployVCFInstaller = 1
 $updateVCFInstallerConfig = 1
-$configureVCFInstallerConfig = 1
 $deployNestedESXiVMsForMgmt = 1
+$restartNestedMgmtVM = 1
+
 $deployNestedESXiVMsForWLD = 0
+$restartNestedWldVM = 0
+
 $setVLanId = 1
+$setupEntropy = 1
+
 $moveVMsIntovApp = 1
+$configureVCFInstallerConfig = 1
 $generateMgmtJson = 1
 $startVCFBringup = 1
+
 $uploadVCFNotifyScript = 0
 
 $srcNotificationScript = "vcf-bringup-notification.sh"
@@ -109,7 +118,7 @@ Function Download-VCFBundle {
             My-Logger "DEBUG: Body: $body"
         }
 
-        $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 30 -Headers $headers -Body $body
+        $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 5 -Headers $headers -Body $body
     } catch {
         $error = ($_ | ConvertFrom-Json)
         if($error.errorCode -eq "BUNDLE_DOWNLOAD_ALREADY_DOWNLOADED") {
@@ -180,14 +189,9 @@ Function Connect-VCFDepot {
     try {
         if($VCFInstallerSoftwareDepot -eq "offline") {
             $payload = @{
-				"offlineAccount" = [Ordered]@{
-                    "username" = $VCFInstallerDepotUsername
-                    "password" = $VCFInstallerDepotPassword
-                }
                 "depotConfiguration" = @{
                     "isOfflineDepot" = $true
-                    "hostname" = $VCFInstallerDepotHost
-                    "port" = $VCFInstallerDepotPort
+                    "url" = $VCFInstallerDepotUrl
                 }
             }
         } else {
@@ -207,7 +211,7 @@ Function Connect-VCFDepot {
             My-Logger "DEBUG: Uri: $uri"
             My-Logger "DEBUG: Body: $body"
         }
-	$requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 60 -Headers $headers -Body $body -ErrorAction Stop
+	$requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 30 -Headers $headers -Body $body -ErrorAction Stop
     } catch {
 	My-Logger "Failed to connect to VCF Software Depot" "red"
 	$requests
@@ -242,7 +246,7 @@ Function Sync-VCFDepot {
             My-Logger "DEBUG: Body: $body"
         }
 
-        $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 30 -Headers $headers
+        $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 5 -Headers $headers
     } catch {
         My-Logger "Failed to sync VCF Software Depot" "red"
         Write-Error "`n($_.Exception.Message)`n"
@@ -272,8 +276,8 @@ Function Sync-VCFDepot {
             $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 5 -Headers $headers
             if($requests.StatusCode -eq 200) {
                 if(($requests.Content | ConvertFrom-Json).syncStatus -ne "SYNCED") {
-                    My-Logger "VCF Software Depot Sync not ready yet, sleeping for 5min ..."
-                    Start-Sleep 300
+                    My-Logger "VCF Software Depot Sync not ready yet, sleeping for 6 minutes ..."
+                    Start-Sleep 360
                 } else {
                     My-Logger "Successfully synced VCF Software Depot ..."
                     break
@@ -306,7 +310,7 @@ Function Download-VCFRelease {
             My-Logger "DEBUG: Body: $body"
         }
 
-        $requests = Invoke-WebRequest -Uri $uri -Method GET -SkipCertificateCheck -TimeoutSec 30 -Headers $headers
+        $requests = Invoke-WebRequest -Uri $uri -Method GET -SkipCertificateCheck -TimeoutSec 5 -Headers $headers
     } catch {
         My-Logger "Failed to retrieve $VCFInstallerProductSKU release" "red"
         Write-Error "`n($_.Exception.Message)`n"
@@ -349,11 +353,11 @@ Function Download-VCFRelease {
                 My-Logger "DEBUG: Body: $body"
             }
 
-            $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 30 -Headers $headers
+            $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 5 -Headers $headers
             if($requests.StatusCode -eq 200) {
                 $downloadStatus = ($requests.Content | ConvertFrom-Json).elements.downloadStatus
 
-                if($downloadStatus-contains "INPROGRESS" -or $downloadStatus -contains "SCHEDULED" -or $downloadStatus -contains "VALIDATING" -or $downloadStatus -contains "FAILED") {
+                if($downloadStatus -contains "INPROGRESS" -or $downloadStatus -contains "SCHEDULED" -or $downloadStatus -contains "VALIDATING" -or $downloadStatus -contains "FAILED") {
                     if($downloadStatus -contains "FAILED") {
                         $failedBundles = (($requests.Content | ConvertFrom-Json).elements | Where-Object {$_.downloadStatus -eq "FAILED"})
 
@@ -390,12 +394,30 @@ if($preCheck -eq 1) {
         exit
     }
 
+    if(!(Test-Path $VCFInstallerOVA)) {
+        Write-Host -ForegroundColor Red "`nUnable to find $VCFInstallerOVA ...`n"
+        exit
+    }
+
     if($VCFInstallerSoftwareDepot -eq "offline") {
-        try {
-            (new-object System.Net.Sockets.TcpClient).Connect(${VCFInstallerDepotHost},${VCFInstallerDepotPort})
-        } catch {
-            Write-Host -ForegroundColor Red "`nUnable to reach VCF offline depot ${VCFInstallerDepotHost}:${VCFInstallerDepotPort} ...`n"
+        $uri = [System.Uri]${VCFInstallerDepotUrl}
+        $hostName = $uri.Host
+        $port = if ($uri.Port -ne -1) { $uri.Port } else { 80 } # Default to 80 if no port in URL
+
+        $socket = New-Object System.Net.Sockets.Socket([System.Net.Sockets.AddressFamily]::InterNetwork, [System.Net.Sockets.SocketType]::Stream, [System.Net.Sockets.ProtocolType]::Tcp)
+        $connection = $socket.BeginConnect($hostName, $port, $null, $null)
+
+        # Wait 2 seconds for a response
+        $success = $connection.AsyncWaitHandle.WaitOne(2000, $true)
+
+        if (-not $success) {
+            Write-Host -ForegroundColor Red "`nUnable to reach endpoint ${hostName}:${port} (Timeout or Refused)`n"
+            $socket.Close()
             exit
+        } else {
+            $socket.EndConnect($connection)
+            $socket.Close()
+            # Reachable! We don't care about Auth because we never sent an HTTP request.
         }
     }
 }
@@ -436,6 +458,10 @@ if($confirmDeployment -eq 1) {
     Write-Host -ForegroundColor White $VCFInstallerVMName
     Write-Host -NoNewline -ForegroundColor Green "IP Address: "
     Write-Host -ForegroundColor White $VCFInstallerIP
+	Write-Host -NoNewline -ForegroundColor Green "vCPU: "
+	Write-Host -ForegroundColor White $VCFInstallerVMvCPU
+	Write-Host -NoNewline -ForegroundColor Green "vMEM: "
+	Write-Host -ForegroundColor White "$VCFInstallerVMvMEM GB"
 
     if($deployNestedESXiVMsForMgmt -eq 1) {
         Write-Host -ForegroundColor Yellow "`n---- vESXi Configuration for $VCFInstallerProductSKU Management Domain ----"
@@ -452,14 +478,7 @@ if($confirmDeployment -eq 1) {
         Write-Host -NoNewline -ForegroundColor Green "Capacity VMDK: "
         Write-Host -ForegroundColor White "$NestedESXiMGMTCapacityvDisk GB"
     }
-    
-    if( $setupNvmeMemoryTiering -eq 1) {
-        Write-Host -ForegroundColor Yellow "`n---- vESXi VM NVMe Memory Tiering configuration Management Domain ----"
-        Write-Host -NoNewline -ForegroundColor Green "NVMe Memory Tiering VMDK: "
-        Write-Host -ForegroundColor White "$NestedESXiMGMTMemoryTieringDisk GB"
-        Write-Host -NoNewline -ForegroundColor Green "Percentage of DRAM: "
-        Write-Host -ForegroundColor White "$NestedESXiMGMTMemoryTieringPct %"
-    }
+
     if($deployNestedESXiVMsForWLD -eq 1) {
         Write-Host -ForegroundColor Yellow "`n---- vESXi Configuration for $VCFInstallerProductSKU Workload Domain ----"
         Write-Host -NoNewline -ForegroundColor Green "# of Nested ESXi VMs: "
@@ -513,9 +532,13 @@ if($confirmDeployment -eq 1) {
     Write-Host -NoNewline -ForegroundColor Green "ESXi Gateway Mgmt Domain: "
     Write-Host -ForegroundColor White $VMNestedESXiMgmtGateway
 	if($deployNestedESXiVMsForWLD -eq 1) {
+		Write-Host -NoNewline -ForegroundColor Green "Wld VM Gateway (documentation for NSX Edge VMs): "
+		Write-Host -ForegroundColor White $VMWldGateway
 		Write-Host -NoNewline -ForegroundColor Green "ESXi Gateway Wld Domain: "
 		Write-Host -ForegroundColor White $VMNestedESXiWldGateway
 	}
+	Write-Host -NoNewline -ForegroundColor Green "VM Domain: "
+	Write-Host -ForegroundColor White $VMDomain
     Write-Host -NoNewline -ForegroundColor Green "DNS: "
     Write-Host -ForegroundColor White $VMDNS
     Write-Host -NoNewline -ForegroundColor Green "NTP: "
@@ -537,7 +560,7 @@ if($confirmDeployment -eq 1) {
     Clear-Host
 }
 
-if($deployNestedESXiVMsForMgmt -eq 1 -or $updateVCFInstallerConfig -eq 1 -or $deployVCFInstaller -eq 1 -or $moveVMsIntovApp -eq 1) {
+if($deployNestedESXiVMsForMgmt -eq 1 -or $restartNestedMgmtVM -eq 1 -or $updateVCFInstallerConfig -eq 1 -or $deployVCFInstaller -eq 1 -or $moveVMsIntovApp -eq 1) {
     My-Logger "Connecting to Management vCenter Server $VIServer ..."
     $viConnection = Connect-VIServer $VIServer -User $VIUsername -Password $VIPassword -WarningAction SilentlyContinue
 	$WarningPreference = 'SilentlyContinue'
@@ -577,7 +600,7 @@ if($deployVCFInstaller -eq 1) {
     Set-VM -Server $viConnection -VM $vm -NumCpu $VCFInstallerVMvCPU -CoresPerSocket $VCFInstallerVMvCPU -MemoryGB $VCFInstallerVMvMEM -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
 
     My-Logger "Powering On $VCFInstallerVMName ..."
-    $vm | Start-Vm -RunAsync | Out-Null
+    $vm | Start-Vm | Out-Null
 }
 
 if($updateVCFInstallerConfig -eq 1) {
@@ -591,8 +614,8 @@ if($updateVCFInstallerConfig -eq 1) {
             }
         }
         catch {
-            My-Logger "VCF Installer UI is not ready yet, sleeping for 120 seconds ..."
-            Start-Sleep 120
+            My-Logger "VCF Installer UI is not ready yet, sleeping for 5 min ..."
+            Start-Sleep 300
         }
     }
 
@@ -620,25 +643,18 @@ if($updateVCFInstallerConfig -eq 1) {
         }
         $script += "chmod 755 ${vcfFeatureConfigFile}`n"
     }
-	
-    if($VCFInstallerSoftwareDepot -eq "offline") {
-        $vcfLcmConfigFile = "/opt/vmware/vcf/lcm/lcm-app/conf/application-prod.properties"
 
-        if($VCFInstallerDepotHttps -eq $false) {
-            $script += "sed -i -e `"/lcm.depot.adapter.port=.*/a lcm.depot.adapter.httpsEnabled=false`" ${vcfLcmConfigFile}`n"
-        }
-    }
 
-    $script += "echo 'y' | '/opt/vmware/vcf/operationsmanager/scripts/cli/sddcmanager_restart_services.sh'"
+    $script += "echo 'y' | '/opt/vmware/vcf/operationsmanager/scripts/cli/sddcmanager_restart_services.sh'`n"
     $script | Out-File $scriptName
 
-	#if (-not (Test-Path -Path /tmp/${scriptName} -PathType leaf)) {
-	#$vcfVM = Get-VM -Server $viConnection $vcfInstallerVMName -Location $VMCluster  | Where-Object {$_.ResourcePool.Id -eq $rp.Id}
-	My-Logger "Transfering configuration shell script ($scriptName) to VCF Installer VM if not already done ..."
-	Copy-VMGuestFile -Server $viConnection -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword -LocalToGuest -Source ${scriptName} -Destination /tmp/${scriptName} -Force | Out-Null
+	My-Logger "Transfering configuration shell script ($scriptName) to VCF Installer VM ..."
+	$vcfVM = Get-VM -Name $VCFInstallerVMName -Server $viConnection -Location $cluster  | Where-Object {$_.ResourcePool.Id -eq $rp.Id} 
+	Copy-VMGuestFile -Server $viConnection -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword -LocalToGuest -Source ${scriptName} -Destination /tmp/${scriptName} | Out-Null
 	My-Logger "Running configuration shell script on VCF Installer VM ..."
-	Invoke-VMScript -ScriptText "bash /tmp/${scriptName}" -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword -RunAsync | Out-Null
-	#}
+	Invoke-VMScript -ScriptText "bash /tmp/${scriptName}" -VM $vcfVM -GuestUser "root" -GuestPassword $VCFInstallerRootPassword -ScriptType Bash | Out-Null
+
+    Start-Sleep -Seconds 120
 }
 
 if($deployNestedESXiVMsForMgmt -eq 1) {
@@ -697,13 +713,34 @@ if($deployNestedESXiVMsForMgmt -eq 1) {
 
         $vm | New-AdvancedSetting -name "ethernet3.filter4.name" -value "dvfilter-maclearn" -confirm:$false -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
         $vm | New-AdvancedSetting -Name "ethernet3.filter4.onFailure" -value "failOpen" -confirm:$false -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
+        # Allow NestedESX to make use of NVMe Tiering if it's enabled on the physical host
+        $vm | New-AdvancedSetting -Name "sched.mem.enableNestedTiering" -value "TRUE" -confirm:$false -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
 
         My-Logger "Powering On $vmname ..."
-        $vm | Start-Vm -RunAsync | Out-Null
+        $vm | Start-Vm | Out-Null
+    }
+    Start-Sleep -Seconds 120
+}
+
+if($restartNestedMgmtVM -eq 1) {
+    if($deployNestedESXiVMsForMgmt -eq 1) {
+        $NestedESXiHostnameToIPsForManagementDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+            $VMName = $_.Key
+            $VMIPAddress = $_.Value
+            $vm = Get-VM -Server $viConnection -Name $VMName -Location $VMCluster | Where-Object {$_.ResourcePool.Id -eq $rp.Id}
+            do {	
+                My-Logger "Setup service NTP to start with ESX and restart guest OS of $VMName ..."
+                $ping = Test-Connection $VMIPAddress -Quiet
+            } until ($ping -contains "True")
+            Get-VMHost -VM $vm | Get-VmHostService | Where-Object {$_.key -eq "ntpd"} | Set-VMHostService -policy "on"  | Out-File -Append -LiteralPath $verboseLogFile
+			Get-VMHost -VM $vm | Get-VmHostService | Where-Object {$_.key -eq "ntpd"} | Start-VMHostService  | Out-File -Append -LiteralPath $verboseLogFile
+			Start-Sleep -Seconds 120
+            $vm | Restart-VMGuest -confirm:$false | Out-Null
+        }
     }
 }
 
-if($deployNestedESXiVMsForWLD -eq 1) {
+if($deployNestedESXiVMsForWLD -eq 1 -or $restartNestedWldVM -eq 1) {
     My-Logger "Connecting to Management vCenter Server $VIServer ..."
     $viConnection = Connect-VIServer $VIServer -User $VIUsername -Password $VIPassword -WarningAction SilentlyContinue
 	$WarningPreference = 'SilentlyContinue'
@@ -769,12 +806,31 @@ if($deployNestedESXiVMsForWLD -eq 1) {
 
         $vm | New-AdvancedSetting -name "ethernet3.filter4.name" -value "dvfilter-maclearn" -confirm:$false -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
         $vm | New-AdvancedSetting -Name "ethernet3.filter4.onFailure" -value "failOpen" -confirm:$false -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
+        # Allow NestedESX to make use of NVMe Tiering if it's enabled on the physical host
+        $vm | New-AdvancedSetting -Name "sched.mem.enableNestedTiering" -value "TRUE" -confirm:$false -ErrorAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
 
         My-Logger "Powering On $vmname ..."
-        $vm | Start-Vm -RunAsync | Out-Null
+        $vm | Start-Vm | Out-Null
     }
 }
 
+if($restartNestedWldVM -eq 1) {
+    if($deployNestedESXiVMsForWLD -eq 1) {
+        $NestedESXiHostnameToIPsForWorkloadDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+            $VMName = $_.Key
+            $VMIPAddress = $_.Value
+            $vm = Get-VM -Server $viConnection -Name $VMName -Location $VMCluster | Where-Object {$_.ResourcePool.Id -eq $rp.Id}
+            do {	
+                My-Logger "wait Initiate guest OS reboot of $VMName  ..."
+                $ping = Test-Connection $VMIPAddress -Quiet
+            } until ($ping -contains "True")
+            Get-VMHost -VM $vm | Get-VmHostService | Where-Object {$_.key -eq "ntpd"} | Set-VMHostService -policy "on"  | Out-File -Append -LiteralPath $verboseLogFile
+			Get-VMHost -VM $vm | Get-VmHostService | Where-Object {$_.key -eq "ntpd"} | Start-VMHostService  | Out-File -Append -LiteralPath $verboseLogFile
+			Start-Sleep -Seconds 120
+            $vm | Restart-VmGuest -confirm:$false | Out-Null
+        }
+    }
+}
 Start-Sleep -Seconds 90
 
 if($setVLanId -eq 1) {
@@ -785,14 +841,14 @@ if($setVLanId -eq 1) {
             $targetVMHost = $VMIPAddress
             
             do {	
-            My-Logger "Waiting for $targetVMHost to be ready on network ..."
+            #My-Logger "Waiting for $targetVMHost to be ready on network ..."
             $ping = Test-Connection $targetVMHost -Quiet
             Start-Sleep 60
             } until ($ping -contains "True")
             
-            $viConnectionESXi = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
-            My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for VM Network"
-            Get-VirtualPortgroup -Server $viConnectionESXi -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
+            $viConnectionESXiMgmt = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue
+            My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for VM Network on $VMName"
+            Get-VirtualPortgroup -Server $viConnectionESXiMgmt -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
 		}
     }
 	if($deployNestedESXiVMsForWLD -eq 1) {
@@ -802,26 +858,96 @@ if($setVLanId -eq 1) {
             $targetVMHost = $VMIPAddress
             
             do {	
-            My-Logger "Waiting for $targetVMHost to be ready on network ..."
+            #My-Logger "Waiting for $targetVMHost to be ready on network ..."
             $ping = Test-Connection $targetVMHost -Quiet
             Start-Sleep 60
             } until ($ping -contains "True")
             
-            $viConnectionESXi = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile 
-            My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for VM Network"
-            Get-VirtualPortgroup -Server $viConnectionESXi -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
+            $viConnectionESXiWld = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue 
+            My-Logger "Setting VLAN ID $NestedVMNetworkWldVLanId for VM Network $VMName"
+            Get-VirtualPortgroup -Server $viConnectionESXiWld -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkWldVLanId | Out-File -Append -LiteralPath $verboseLogFile
 		}
 	}
 }
 
-if( $deployNestedESXiVMs -eq 1) {
+if( $setupEntropy -eq 1) {
+    if($deployNestedESXiVMsForMgmt -eq 1) {
+		My-Logger "Setting Entropy on Management Domain hosts..."
+		$NestedESXiHostnameToIPsForManagementDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+			$VMName = $_.Key
+			$VMIPAddress = $_.Value
+			$targetVMHost = $VMIPAddress
+			
+			do {	
+			#My-Logger "Waiting for $targetVMHost to be ready on network ..."
+			$ping = Test-Connection $targetVMHost -Quiet
+			Start-Sleep 60
+			} until ($ping -contains "True")
+			
+			#My-Logger "Connecting to ESXi $targetVMHost node ..."
+			$vEsxi = Connect-VIServer -Server $targetVMHost -User root -Password $VMPassword -WarningAction SilentlyContinue
+			$esxcli = Get-EsxCli -Server $vEsxi -V2
+			My-Logger "Update entropy sources to $entropySourcesMGMT on $VMName and reboot ..."
+			$kernargs=$esxcli.system.settings.kernel.set.CreateArgs()
+			$kernargs.setting = "entropySources"
+			$kernargs.value = $entropySourcesMGMT
+			$esxcli.system.settings.kernel.set.Invoke($kernargs) | Out-File -Append -LiteralPath $verboseLogFile
+			sleep 30
+			#My-Logger "Rebooting ESXi $targetVMHost ..."
+			Restart-VMHost -VMHost $targetVMHost -Server $vEsxi -confirm:$false -force -RunAsync -ErrorAction Ignore | Out-File -Append -LiteralPath $verboseLogFile
+			
+			#My-Logger "Disconnecting from $targetVMHost ..."
+			Disconnect-VIServer -Server $vEsxi -Confirm:$false
+		}
+	}
+	if($deployNestedESXiVMsForWLD -eq 1) {
+		My-Logger "Setting Entropy on Workload Domain hosts..."
+		$NestedESXiHostnameToIPsForWorkloadDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+			$VMName = $_.Key
+			$VMIPAddress = $_.Value
+			$targetVMHost = $VMIPAddress
+			
+			do {	
+			#My-Logger "Waiting for $targetVMHost to be ready on network ..."
+			$ping = Test-Connection $targetVMHost -Quiet
+			Start-Sleep 60
+			} until ($ping -contains "True")
+			
+			#My-Logger "Connecting to ESXi $targetVMHost node ..."
+			$vEsxi = Connect-VIServer -Server $targetVMHost -User root -Password $VMPassword -WarningAction SilentlyContinue
+			$esxcli = Get-EsxCli -Server $vEsxi -V2
+			My-Logger "Update entropy sources to $entropySourcesWLD on $VMName and reboot ..."
+			$kernargs=$esxcli.system.settings.kernel.set.CreateArgs()
+			$kernargs.setting = "entropySources"
+			$kernargs.value = $entropySourcesWLD
+			$esxcli.system.settings.kernel.set.Invoke($kernargs) | Out-File -Append -LiteralPath $verboseLogFile
+			sleep 30
+			#My-Logger "Rebooting ESXi $targetVMHost ..."
+			Restart-VMHost -VMHost $targetVMHost -Server $vEsxi -confirm:$false -force -RunAsync -ErrorAction Ignore | Out-File -Append -LiteralPath $verboseLogFile
+			
+			#My-Logger "Disconnecting from $targetVMHost ..."
+			Disconnect-VIServer -Server $vEsxi -Confirm:$false
+		}
+	}
+}
+
+if($deployNestedESXiVMsForMgmt -eq 1 -or $restartNestedMgmtVM -eq 1 -or $deployNestedESXiVMsForWLD -eq 1 -or $restartNestedWldVM -eq 1 -or $setVLanId -eq 1) {
     My-Logger "Disconnecting from $VIServer ..."
     Disconnect-VIServer -Server $viConnection -Confirm:$false
 }
 
 if($moveVMsIntovApp -eq 1) {
-    My-Logger "Connecting to Management vCenter Server $VIServer ..."
-	$WarningPreference = 'SilentlyContinue'
+	if(!($viConnection = Connect-VIServer $VIServer -User $VIUsername -Password $VIPassword -WarningAction SilentlyContinue)) {
+		Write-Host -ForegroundColor Red "Unable to connect to Management vCenter Server $VIServer, please check the deployment"
+		exit
+	} else {
+		My-Logger "Successfully logged into Management vCenter Server $VIServer ..."
+		$datastore = Get-Datastore -Server $viConnection -Name $VMDatastoreMGMT | Select-Object -First 1
+		$cluster = Get-Cluster -Server $viConnection -Name $VMCluster
+		$vmhost = $cluster | Get-VMHost -Datastore $datastore | Get-Random -Count 1
+		$rp = Get-ResourcePool -Name Resources -Location $cluster
+	}
+	
 	if($deployVCFInstaller -eq 1 -or $deployNestedESXiVMsForMgmt -eq 1) {
 		$datastore = Get-Datastore -Server $viConnection -Name $VMDatastoreMGMT | Select-Object -First 1
 	} else {
@@ -876,7 +1002,7 @@ if($moveVMsIntovApp -eq 1) {
 
 if($generateMgmtJson -eq 1) {
     $vcsaFQDN = $VCSAName + "." + $VMDomain
-
+	$NSXManagerNode1Hostname = ($($NSXManagerHostnameToIPsForManagementDomain.Keys|Sort-Object) | Select-Object -Index 0) + ".${VMDomain}"
     $esxivMotionNetwork = $NestedESXivMotionNetworkCidr.split("/")[0]
     $esxivMotionNetworkOctects = $esxivMotionNetwork.split(".")
     $esxivMotionGateway = ($esxivMotionNetworkOctects[0..2] -join '.') + ".1"
@@ -983,7 +1109,9 @@ if($generateMgmtJson -eq 1) {
         $nsxSpec = [ordered]@{
             "nsxtManagerSize" = $NSXManagerSize
             "nsxtManagers" = @(
-                @{"hostname" = $NSXManagerNodeHostname}
+                @{
+					"hostname" = $NSXManagerNode1Hostname
+				}
             )
             "vipFqdn" = $NSXManagerVIPHostname
             "useExistingDeployment" = $false
@@ -1046,13 +1174,10 @@ if($generateMgmtJson -eq 1) {
         $licenseServerSpec = [ordered]@{
             "hostname" = $VCFLicenseServerHostname
         }
+
     if($VCFInstallerProductSKU -eq "VCF") {
         $vidbSpec = [ordered]@{
             "hostname" = $VCFManagementServicesIdentityHostname
-        }
-        $vcfOperationsLogsSpec = [ordered]@{
-            "hostname" = $VCFManagementLogsHostname
-            "password" = $VCFManagementLogsPassword
         }
         $opsCollectorSpec = [ordered]@{
             "hostname" = $VCFOperationsCollectorHostname
@@ -1135,7 +1260,7 @@ if($generateMgmtJson -eq 1) {
         )
         $vdsSpec = @(
             [ordered]@{
-                "dvsName" = "sddc1-cl01-vds01"
+                "dvsName" = "${VCSAClusterName}-vds01"
                 "networks" = @(
                     "MANAGEMENT",
                     "VM_MANAGEMENT",
@@ -1143,15 +1268,6 @@ if($generateMgmtJson -eq 1) {
                     "VSAN"
                 )
                 "mtu" = "9000"
-                "nsxtSwitchConfig" = [ordered]@{
-                    "transportZones" = @(
-                        @{
-                            "transportType" = "OVERLAY"
-                            "name" = "VCF-Created-Overlay-Zone"
-                        }
-                    )
-                    "hostSwitchOperationalMode" = "STANDARD"
-                }
                 "vmnicsToUplinks" = @(
                     @{
                         "id" = "vmnic0"
@@ -1160,13 +1276,6 @@ if($generateMgmtJson -eq 1) {
                     @{
                         "id" = "vmnic1"
                         "uplink" = "uplink2"
-                    }
-                )
-                "nsxTeamings" = @(
-                    @{
-                        "policy" = "LOADBALANCE_SRCID"
-                        "activeUplinks" = @("uplink1","uplink2")
-                        "standByUplinks" = @()
                     }
                 )
                 "lagSpecs" = $null
@@ -1179,7 +1288,6 @@ if($generateMgmtJson -eq 1) {
         $vcfConfig.Add("vcfAutomationSpec",$autoSpec)
         $vcfConfig.Add("saltSpec",@{})
         $vcfConfig.Add("vidbSpec",$vidbSpec)
-        $vcfConfig.Add("vcfOperationsLogsSpec",$vcfOperationsLogsSpec)
         $vcfConfig.Add("saltRaasSpec",@{})
     }
 
@@ -1189,9 +1297,49 @@ if($generateMgmtJson -eq 1) {
     $vcfConfig.Add("sddcLcmSpec",$sddcLcmSpec)
     $vcfConfig.Add("fleetLcmSpec",$fleetLcmSpec)
     $vcfConfig.Add("fleetDepotSpec",@{})
-
     $vcfConfig.Add("networkSpecs",$netSpec)
     $vcfConfig.Add("dvsSpecs",$vdsSpec)
+	
+	if($VCSAVDSSeparateNSXSwitch) {
+		$sepNsxSwitchSpec = [ordered]@{
+			"dvsName" = "${VCSAClusterName}-vds02"
+			"vmnics" = @("vmnic2","vmnic3")
+			"mtu" = 9000
+			"networks" = @()
+			"isUsedByNsxt" = $true
+			"nsxtSwitchConfig" = [ordered]@{
+				"transportZones" = @(
+					@{
+						"transportType" = "OVERLAY"
+						"name" = "${DeploymentId}-tz-overlay01"
+					}
+					@{
+						"transportType" = "VLAN"
+						"name" = "${DeploymentId}-tz-vlan01"
+					}
+				)
+				"hostSwitchOperationalMode" = "ENS_INTERRUPT"
+			}
+			"vmnicsToUplinks" = @(
+				@{
+					"id" = "vmnic2"
+					"uplink" = "uplink1"
+				}
+				@{
+					"id" = "vmnic3"
+					"uplink" = "uplink2"
+				}
+			)
+			"nsxTeamings" = @(
+				@{
+					"policy" = "LOADBALANCE_SRCID"
+					"activeUplinks" = @("uplink1","uplink2")
+					"standByUplinks" = @()
+				}
+			)
+		}
+		$vcfConfig.dvsSpecs+=$sepNsxSwitchSpec
+	}
 
     My-Logger "Generating $VCFInstallerProductSKU Management Domain deployment JSON file $VCFManagementDomainJSONFile"
     $vcfConfig | ConvertTo-Json -Depth 20 | Out-File -LiteralPath $VCFManagementDomainJSONFile
@@ -1236,7 +1384,7 @@ if($startVCFBringup -eq 1) {
             My-Logger "DEBUG: Body: $body"
         }
 
-        $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 30 -Headers $headers -Body $body
+        $requests = Invoke-WebRequest -Uri $uri -Method $method -SkipCertificateCheck -TimeoutSec 5 -Headers $headers -Body $body
     }
     catch {
         if($requests.StatusCode -eq 200 -or $requests.StatusCode -eq 202) {
@@ -1266,7 +1414,7 @@ if($startVCFBringup -eq 1 -and $uploadVCFNotifyScript -eq 1) {
     }
 }
 
-if($deployNestedESXiVMsForMgmt -eq 1 -or $deployNestedESXiVMsForWLD -eq 1 -or $updateVCFInstallerConfig -eq 1 -or $deployVCFInstaller -eq 1) {
+if($deployNestedESXiVMsForMgmt -eq 1 -or $deployNestedESXiVMsForWLD -eq 1 -or $updateVCFInstallerConfig -eq 1 -or $deployVCFInstaller -eq 1 -or $moveVMsIntovApp -eq 1) {
     My-Logger "Disconnecting from Management vCenter Server $VIServer ..."
     Disconnect-VIServer -Server $viConnection -Confirm:$false
 }
@@ -1274,7 +1422,7 @@ if($deployNestedESXiVMsForMgmt -eq 1 -or $deployNestedESXiVMsForWLD -eq 1 -or $u
 $EndTime = Get-Date
 $duration = [math]::Round((New-TimeSpan -Start $StartTime -End $EndTime).TotalMinutes,2)
 
-My-Logger "$VCFInstallerProductSKU 9.1 Lab Deployment Complete!"
+My-Logger "$VCFInstallerProductSKU 9.1.1 Lab Deployment Complete!"
 My-Logger "`tStartTime: $StartTime" -color cyan
 My-Logger "`tEndTime: $EndTime" -color cyan
 My-Logger "`tDuration: $duration minutes to deploy VCF Installer, Nested ESX VMs & start $VCFInstallerProductSKU Deployment" -color cyan
